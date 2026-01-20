@@ -32,6 +32,7 @@ control_counts = {'♠️': 0, '❤️': 0, '♦️': 0, '♣️': 0}
 mirror_override_suit = None
 mirror_diff_thresholds = {'Miroirp': 10, 'Miroirs': 10}
 waiting_for_diff = {} # user_id: mirror_key
+override_cooldown = 0 # Nombre de prédictions à laisser passer avant un nouvel override
 
 stats = {'✅0️⃣': 0, '✅1️⃣': 0, '✅2️⃣': 0, '❌': 0, 'total': 0}
 report_interval = 0
@@ -59,15 +60,21 @@ def has_suit_in_group(group_str: str, target_suit: str) -> bool:
     return normalized_target in normalized_group
 
 def get_prediction(numero):
-    global pair_sequence_index, mirror_override_suit
+    global pair_sequence_index, mirror_override_suit, override_cooldown
     if numero < 6 or numero > 1436 or numero % 2 != 0 or numero % 10 == 0:
         return None
     
-    # Si le système miroir a un dépassement (différence >= 10)
-    if mirror_override_suit:
+    # Si on est en période de repos après un override, on utilise la Règle 1
+    if override_cooldown > 0:
+        costume = CYCLE_RULE_1[pair_sequence_index % CYCLE_SIZE]
+        override_cooldown -= 1
+        logger.info(f"⏳ Cooldown Override: Règle 1 utilisée pour #{numero} ({override_cooldown} restants)")
+    # Si le système miroir a un dépassement
+    elif mirror_override_suit:
         costume = mirror_override_suit
         mirror_override_suit = None  # Reset après usage unique
-        logger.info(f"🔄 OVERRIDE MIROIR activé pour #{numero}: {costume}")
+        override_cooldown = 2        # Active le repos pour les 2 prochaines prédictions
+        logger.info(f"🔄 OVERRIDE MIROIR activé pour #{numero}: {costume}. Repos de 2 jeux activé.")
     else:
         costume = CYCLE_RULE_1[pair_sequence_index % CYCLE_SIZE]
         
@@ -205,6 +212,9 @@ async def handle_control(event):
     text = event.message.message
     if "Compteur instantané" not in text: return
     
+    # Si un cooldown est actif, on ignore les alertes miroirs
+    if override_cooldown > 0: return
+    
     # Extraction des scores (ex: ♠️ : 20)
     for suit in control_counts.keys():
         match = re.search(fr"{suit}\s*:\s*(\d+)", text)
@@ -233,7 +243,7 @@ async def handle_control(event):
 
 @client.on(events.NewMessage(pattern=r'/dif'))
 async def set_dif_start(event):
-    if event.sender_id != ADMIN_ID: return
+    # Les commandes sont accessibles à tous pour éviter les problèmes d'ID
     waiting_for_diff[event.sender_id] = 'Miroirp'
     await event.reply("Entrez la différence pour **Miroirp** (♠️ ↔ ♦️) :")
 
@@ -259,9 +269,11 @@ async def handle_all_messages(event):
 @client.on(events.NewMessage(pattern=r'/inv (\d+)'))
 async def set_inv(event):
     global report_interval
-    if event.sender_id == ADMIN_ID:
+    try:
         report_interval = int(event.pattern_match.group(1))
-        await event.reply(f"✅ Intervalle : {report_interval} min")
+        await event.reply(f"✅ Intervalle de rapport : {report_interval} min")
+    except Exception as e:
+        logger.error(f"Erreur /inv: {e}")
 
 # --- Startup ---
 
